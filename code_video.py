@@ -4,13 +4,16 @@ import mediapipe as mp
 import select
 import sys
 import threading
-from playsound import playsound
-
+import time
+from pygame import mixer   # <-- use pygame instead of playsound
 
 # ---- Config ----
 EAR_THRESHOLD = 0.25      # threshold for eye closed
-CONSEC_FRAMES = 15        # number of consecutive frames to mark "Sleeping"
+SLEEP_TIME = 5            # seconds eyes must stay closed
 ALARM_FILE = "alarm.mp3"
+
+# Init pygame mixer
+mixer.init()
 
 # MediaPipe setup
 mp_face = mp.solutions.face_mesh
@@ -32,20 +35,28 @@ def ear_from_landmarks(lms, w, h, idxs):
         return 0.0, pts
     return vert / horiz, pts
 
-# Background alarm function
-def play_alarm():
-    playsound(ALARM_FILE)
+# Alarm thread control
+alarm_active = False
+alarm_thread = None
+
+def alarm_loop():
+    global alarm_active
+    mixer.music.load(ALARM_FILE)
+    mixer.music.play(-1)   # loop forever
+    while alarm_active:
+        time.sleep(0.1)
+    mixer.music.stop()
 
 # Video input (0 = webcam, or filename)
 cap = cv2.VideoCapture(0)
 
-frame_count = 0
+eye_closed_start = None
 sleeping = False
 
 print("Type 'exit' and press Enter anytime to quit.\n")
 
 while cap.isOpened():
-    # Check if user typed "exit" in terminal
+    # Check if user typed "exit"
     if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
         line = sys.stdin.readline().strip()
         if line.lower() == "exit":
@@ -66,19 +77,23 @@ while cap.isOpened():
         right_ear, right_pts = ear_from_landmarks(lms, w, h, RIGHT_EYE)
         mean_ear = (left_ear + right_ear) / 2.0
 
-        # Check EAR threshold
-        if mean_ear < EAR_THRESHOLD:
-            frame_count += 1
-            if frame_count >= CONSEC_FRAMES:
-                if not sleeping:
-                    # Start alarm in background thread (so it doesn't freeze video)
-                    threading.Thread(target=play_alarm, daemon=True).start()
-                sleeping = True
-        else:
-            frame_count = 0
-            sleeping = False
+        if mean_ear < EAR_THRESHOLD:  # eyes closed
+            if eye_closed_start is None:
+                eye_closed_start = time.time()
 
-        # Draw green outline around eyes
+            elapsed = time.time() - eye_closed_start
+            if elapsed >= SLEEP_TIME and not sleeping:
+                sleeping = True
+                alarm_active = True
+                alarm_thread = threading.Thread(target=alarm_loop, daemon=True)
+                alarm_thread.start()
+        else:  # eyes open
+            eye_closed_start = None
+            if sleeping:
+                sleeping = False
+                alarm_active = False  # stop alarm immediately
+
+        # Draw eyes
         for eye_pts in [left_pts, right_pts]:
             pts = np.array(eye_pts, dtype=np.int32)
             color = (0, 0, 255) if sleeping else (0, 255, 0)
@@ -100,3 +115,5 @@ while cap.isOpened():
 cap.release()
 cv2.destroyAllWindows()
 face_mesh.close()
+alarm_active = False
+mixer.music.stop()
