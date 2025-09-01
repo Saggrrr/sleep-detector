@@ -1,10 +1,16 @@
 import cv2
 import numpy as np
 import mediapipe as mp
+import select
+import sys
+import threading
+from playsound import playsound
+
 
 # ---- Config ----
 EAR_THRESHOLD = 0.25      # threshold for eye closed
 CONSEC_FRAMES = 15        # number of consecutive frames to mark "Sleeping"
+ALARM_FILE = "alarm.mp3"
 
 # MediaPipe setup
 mp_face = mp.solutions.face_mesh
@@ -23,16 +29,29 @@ def ear_from_landmarks(lms, w, h, idxs):
     vert = euclid(p2, p6) + euclid(p3, p5)
     horiz = 2.0 * euclid(p1, p4)
     if horiz == 0:
-        return 0.0
-    return vert / horiz, pts  # return both EAR and eye points
+        return 0.0, pts
+    return vert / horiz, pts
 
-# Video input (0 = webcam, or give filename "video.mp4")
+# Background alarm function
+def play_alarm():
+    playsound(ALARM_FILE)
+
+# Video input (0 = webcam, or filename)
 cap = cv2.VideoCapture(0)
 
 frame_count = 0
 sleeping = False
 
+print("Type 'exit' and press Enter anytime to quit.\n")
+
 while cap.isOpened():
+    # Check if user typed "exit" in terminal
+    if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+        line = sys.stdin.readline().strip()
+        if line.lower() == "exit":
+            print("Exiting...")
+            break
+
     ret, frame = cap.read()
     if not ret:
         break
@@ -51,6 +70,9 @@ while cap.isOpened():
         if mean_ear < EAR_THRESHOLD:
             frame_count += 1
             if frame_count >= CONSEC_FRAMES:
+                if not sleeping:
+                    # Start alarm in background thread (so it doesn't freeze video)
+                    threading.Thread(target=play_alarm, daemon=True).start()
                 sleeping = True
         else:
             frame_count = 0
@@ -59,7 +81,8 @@ while cap.isOpened():
         # Draw green outline around eyes
         for eye_pts in [left_pts, right_pts]:
             pts = np.array(eye_pts, dtype=np.int32)
-            cv2.polylines(frame, [pts], isClosed=True, color=(0, 255, 0), thickness=2)
+            color = (0, 0, 255) if sleeping else (0, 255, 0)
+            cv2.polylines(frame, [pts], isClosed=True, color=color, thickness=2)
 
         # Display info
         status = "Sleeping" if sleeping else "Not Sleeping"
@@ -71,6 +94,7 @@ while cap.isOpened():
 
     cv2.imshow("Sleep Detector", frame)
     if cv2.waitKey(1) & 0xFF == ord("q"):
+        print("Exiting...")
         break
 
 cap.release()
