@@ -2,17 +2,10 @@ import cv2
 import dlib
 import numpy as np
 from scipy.spatial import distance as dist
-from pygame import mixer
-import time
 
 # ---- Config ----
-EAR_THRESHOLD = 0.23
+EAR_THRESHOLD = 0.20
 DRAW = True
-SLEEP_TIME = 1  # seconds eyes must stay closed to trigger alarm
-ALARM_FILE = "alarm.mp3"
-
-# ---- Initialize pygame mixer properly for macOS ----
-mixer.init(frequency=44100)  # ensures proper audio driver initialization
 
 # Dlib setup
 detector = dlib.get_frontal_face_detector()
@@ -37,8 +30,6 @@ def draw_eye_debug(img, pts, color=(0, 255, 0)):
 
 # ---- Video Stream ----
 cap = cv2.VideoCapture(0)  # 0 = default camera
-sleep_start = None  # Track when eyes first closed
-alarm_playing = False  # Track if alarm is already playing
 
 while True:
     ret, frame = cap.read()
@@ -46,8 +37,8 @@ while True:
         break
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = detector(gray, 0)
 
+    faces = detector(gray, 0)
     for face in faces:
         shape = predictor(gray, face)
         landmarks = np.array([[p.x, p.y] for p in shape.parts()])
@@ -59,22 +50,7 @@ while True:
         right_ear = eye_aspect_ratio(right_eye)
         mean_ear = (left_ear + right_ear) / 2.0
 
-        # Check if eyes are closed
-        if mean_ear <= EAR_THRESHOLD:
-            if sleep_start is None:
-                sleep_start = time.time()
-            elif time.time() - sleep_start >= SLEEP_TIME:
-                status = "Sleeping"
-                if not alarm_playing:
-                    mixer.music.load(ALARM_FILE)  # load the alarm
-                    mixer.music.play(-1)          # play in loop
-                    alarm_playing = True
-        else:
-            sleep_start = None
-            status = "Not Sleeping"
-            if alarm_playing:
-                mixer.music.stop()  # stop alarm when eyes open
-                alarm_playing = False
+        status = "Not Sleeping" if mean_ear > EAR_THRESHOLD else "Sleeping"
 
         if DRAW:
             draw_eye_debug(frame, left_eye, (0, 255, 0))
@@ -87,6 +63,7 @@ while True:
 
     cv2.imshow("Sleep Detector", frame)
 
+    # Press 'q' to quit
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
